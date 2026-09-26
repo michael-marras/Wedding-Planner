@@ -3,8 +3,10 @@ import ReactDOM from 'react-dom/client';
 import reportWebVitals from './reportWebVitals';
 import HomePage from './pages/HomePage';
 import LoginPage from './pages/LoginPage.js';
+import CreateAccountPage from './pages/CreateAccountPage.js';
 
 import { createBrowserRouter, RouterProvider } from 'react-router';
+
 
 const router = createBrowserRouter([
   {
@@ -19,6 +21,10 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <LoginPage/>
+  },
+  {
+    path: '/create-account',
+    element: <CreateAccountPage/>
   }
 ]);
 

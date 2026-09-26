@@ -1,3 +1,10 @@
+import Header from '../layouts/Header.js'
+
 export default function LoginPage() {
-    return <h1>LoginPage</h1>
+    return (
+        <>
+            <Header/>
+            <h1>LoginPage</h1>
+        </>
+    );
 }
