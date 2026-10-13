@@ -1,4 +1,4 @@
-import Header from '../layouts/Header.js'
+import Header from '../components/Header.js'
 import Login from '../components/Login.js';
 
 export default function LoginPage() {

@@ -1,4 +1,4 @@
-import './../styles/layouts/Header.css'
+import './../styles/components/Header.css'
 import { useState } from "react";
 import { Link } from "react-router";
 import HomeButton from '../components/HomeButton';

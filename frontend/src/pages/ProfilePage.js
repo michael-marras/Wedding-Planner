@@ -1,4 +1,4 @@
-import Header from '../layouts/Header.js'
+import Header from '../components/Header.js'
 
 export default function ProfilePage() {
     return (
