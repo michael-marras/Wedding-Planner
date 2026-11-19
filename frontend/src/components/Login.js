@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router";
 import { useState } from "react";
+import { useAuth, dummyUser } from "../context/Context";
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -8,6 +9,7 @@ export default function Login() {
     const [loading, setLoading] = useState(false);
 
     const navigate = useNavigate();
+    const { login } = useAuth();
 
     const validateForm = () => {
         if (!username || !password) {
@@ -41,6 +43,21 @@ export default function Login() {
             if (response.ok) {
                 const data = await response.json();
                 localStorage.setItem('token', data.access_token);
+                
+                const userResponse = await fetch('http://localhost:8000/get-user', {
+                    headers: {
+                        Authorization: `Bearer ${data.access_token}`,
+                    },
+                });
+                
+                if (!userResponse.ok) {
+                    setError("Failed to get User");
+                    return;
+                }
+
+                const user = await userResponse.json();
+                console.log(user);
+                login(user);
                 navigate('/');
             } else {
                 const errorData = await response.json();
