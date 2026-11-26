@@ -4,10 +4,11 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
-from models import User
+from models import User, Invite
 from database import SessionLocal, engine
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Literal
 
 app = FastAPI()
 
@@ -119,9 +120,29 @@ def get_current_user(payload: dict = Depends(verify_token), db: Session = Depend
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-@app.get("/get-user")
+class UserOut(BaseModel):
+    username: str
+    budget: int
+    spent: int
+    invites: list[InviteOut]
+    model_config = ConfigDict(from_attributes=True)
+
+class InviteCreate(BaseModel):
+    name: str 
+    email: str | None = None
+    phone: str | None = None
+    plus_one: str | None = None
+    plus_one_email: str | None = None
+    plus_one_phone: str | None = None
+    rsvp: Literal["Pending", "Accepted", "Declined"] = "Pending"
+
+class InviteOut(InviteCreate):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+@app.get("/get-user", response_model=UserOut)
 def read_user(user: User = Depends(get_current_user)):
-    return {"username": user.username, "budget": user.budget, "spent": user.spent}
+    return user
 
 class BudgetUpdate(BaseModel):
     budget: int | None = None
@@ -129,6 +150,7 @@ class BudgetUpdate(BaseModel):
 
 @app.patch("/update-budget")
 def update_user_budget(
+
     data: BudgetUpdate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -139,3 +161,44 @@ def update_user_budget(
         user.spent = data.spent
     db.commit()
     return {"username": user.username, "budget": user.budget, "spent": user.spent}
+
+def create_invite(db: Session, invite: InviteCreate, user_id: int):
+    new_invite = Invite(
+        user_id=user_id,
+        name=invite.name,
+        email=invite.email,
+        phone=invite.phone,
+        plus_one=invite.plus_one,
+        plus_one_email=invite.plus_one_email,
+        plus_one_phone=invite.plus_one_phone,
+        rsvp=invite.rsvp    
+    )
+    db.add(new_invite)
+    db.commit()
+    return "complete"
+
+@app.post("/add-invite")
+def add_invite(
+    invite: InviteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    user_id = current_user.id
+
+    existing = (
+        db.query(Invite)
+        .filter(Invite.user_id == user_id, Invite.name == invite.name)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="This guest is already on your invite list")
+
+    return create_invite(db, invite, user_id)
+
+@app.get("/invites", response_model=list[InviteOut])
+def read_invites(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return db.query(Invite).filter(Invite.user_id == current_user.id).all()
+  
