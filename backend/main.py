@@ -2,20 +2,21 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
-from models import User
+from models import User, Invite
 from database import SessionLocal, engine
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Literal
 
 app = FastAPI()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 origins = [
-    "https://localhost:3000",
-    "https://yourfrontenddomain.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
 app.add_middleware(
@@ -51,7 +52,7 @@ def get_user_by_username(db: Session, username: str):
 def create_user(db: Session, user: UserCreate):
     hashed_password = pwd_context.hash(user.password)
     db_user = User(username=user.username, hashed_password=hashed_password)
-    db.add(db.user)
+    db.add(db_user)
     db.commit()
     return "complete"
 
@@ -75,9 +76,129 @@ def authenticate_user(username: str, password: str, db: Session):
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = dattime.now(datetime.UTC)+ expires_delta
+        expire = datetime.now(timezone.utc)+ expires_delta
     else:
-        expire = datetime.now(datetime.UTC) + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, ALGORITHM)
     return encoded_jwt
+
+@app.post("/token")
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+def verify_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=403, detail="Token is invalid or expired")
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=403, detail="Token is invalid or expired")
+    
+@app.get("/verify-token/{token}") # Look into this later
+async def verify_user_token(token: str):
+    verify_token(token=token)
+    return {"message": "Token is valid"}
+
+def get_current_user(payload: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    user = get_user_by_username(db, payload["sub"])
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+class UserOut(BaseModel):
+    username: str
+    budget: int
+    spent: int
+    invites: list[InviteOut]
+    model_config = ConfigDict(from_attributes=True)
+
+class InviteCreate(BaseModel):
+    name: str 
+    email: str | None = None
+    phone: str | None = None
+    plus_one: str | None = None
+    plus_one_email: str | None = None
+    plus_one_phone: str | None = None
+    rsvp: Literal["Pending", "Accepted", "Declined"] = "Pending"
+
+class InviteOut(InviteCreate):
+    id: int
+    model_config = ConfigDict(from_attributes=True)
+
+@app.get("/get-user", response_model=UserOut)
+def read_user(user: User = Depends(get_current_user)):
+    return user
+
+class BudgetUpdate(BaseModel):
+    budget: int | None = None
+    spent: int | None = None
+
+@app.patch("/update-budget")
+def update_user_budget(
+
+    data: BudgetUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if data.budget is not None:
+        user.budget = data.budget
+    if data.spent is not None:
+        user.spent = data.spent
+    db.commit()
+    return {"username": user.username, "budget": user.budget, "spent": user.spent}
+
+def create_invite(db: Session, invite: InviteCreate, user_id: int):
+    new_invite = Invite(
+        user_id=user_id,
+        name=invite.name,
+        email=invite.email,
+        phone=invite.phone,
+        plus_one=invite.plus_one,
+        plus_one_email=invite.plus_one_email,
+        plus_one_phone=invite.plus_one_phone,
+        rsvp=invite.rsvp    
+    )
+    db.add(new_invite)
+    db.commit()
+    return "complete"
+
+@app.post("/add-invite")
+def add_invite(
+    invite: InviteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    user_id = current_user.id
+
+    existing = (
+        db.query(Invite)
+        .filter(Invite.user_id == user_id, Invite.name == invite.name)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="This guest is already on your invite list")
+
+    return create_invite(db, invite, user_id)
+
+@app.get("/invites", response_model=list[InviteOut])
+def read_invites(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    return db.query(Invite).filter(Invite.user_id == current_user.id).all()
+  
